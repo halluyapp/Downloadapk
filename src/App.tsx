@@ -4,9 +4,7 @@ import {
   getAllFiles,
   saveHostedFile,
   deleteHostedFile,
-  getFileBlob,
-  incrementDownloadCount,
-  getStorageStats,
+  getDownloadUrl,
 } from './services/storage';
 import { filterAndSortFiles } from './utils/fileHelpers';
 import { Header } from './components/Header';
@@ -17,7 +15,7 @@ import { UploadModal } from './components/UploadModal';
 import { FileDetailModal } from './components/FileDetailModal';
 import { QRCodeModal } from './components/QRCodeModal';
 import { StorageStatsModal } from './components/StorageStatsModal';
-import { FolderSearch, Plus, CheckCircle, Trash2, Smartphone, Archive } from 'lucide-react';
+import { FolderSearch, Plus, CheckCircle, Smartphone } from 'lucide-react';
 
 const CATEGORIES: Category[] = [
   'All',
@@ -51,7 +49,7 @@ export default function App() {
   // Notification Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Load files from IndexedDB storage
+  // Load files from backend API
   useEffect(() => {
     loadCatalog();
   }, []);
@@ -132,48 +130,48 @@ export default function App() {
     setIsUploadOpen(true);
   };
 
-  // Save uploaded file to storage & state
-  const handleSaveFile = async (newFile: HostedFile, blob: Blob) => {
-    await saveHostedFile(newFile, blob);
-    setFiles((prev) => [newFile, ...prev]);
-    showToast(`Successfully published ${newFile.title} (v${newFile.version})`);
+  // Save uploaded file to Express server backend & state
+  const handleSaveFile = async (newFileMeta: HostedFile, blob: Blob) => {
+    try {
+      const saved = await saveHostedFile(newFileMeta, blob);
+      setFiles((prev) => [saved, ...prev]);
+      showToast(`Successfully published ${saved.title} (v${saved.version}) to server`);
+    } catch (err: any) {
+      showToast(`Error: ${err.message || 'Upload failed'}`);
+    }
   };
 
   // Delete file handler
   const handleDeleteFile = async (targetFile: HostedFile) => {
-    if (confirm(`Are you sure you want to delete "${targetFile.title}" from your repository?`)) {
-      await deleteHostedFile(targetFile.id);
-      setFiles((prev) => prev.filter((f) => f.id !== targetFile.id));
-      if (selectedFileDetails?.id === targetFile.id) setSelectedFileDetails(null);
-      if (selectedFileQR?.id === targetFile.id) setSelectedFileQR(null);
-      showToast(`Deleted ${targetFile.title} from repository.`);
+    if (confirm(`Are you sure you want to delete "${targetFile.title}" from the server?`)) {
+      const success = await deleteHostedFile(targetFile.id);
+      if (success) {
+        setFiles((prev) => prev.filter((f) => f.id !== targetFile.id));
+        if (selectedFileDetails?.id === targetFile.id) setSelectedFileDetails(null);
+        if (selectedFileQR?.id === targetFile.id) setSelectedFileQR(null);
+        showToast(`Deleted ${targetFile.title} from server.`);
+      } else {
+        showToast(`Failed to delete ${targetFile.title}`);
+      }
     }
   };
 
-  // Download trigger
+  // Download trigger streaming directly from backend server
   const handleDownload = async (file: HostedFile) => {
-    showToast(`Preparing download for ${file.filename}...`);
+    showToast(`Downloading ${file.filename} from server...`);
     
-    // Increment count in storage and state
-    const newCount = await incrementDownloadCount(file.id);
+    // Update local download count state
     setFiles((prev) =>
       prev.map((f) => (f.id === file.id ? { ...f, downloadCount: f.downloadCount + 1 } : f))
     );
 
-    // Get blob data
-    const blob = await getFileBlob(file.id);
-    if (blob) {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } else {
-      showToast(`Error: Download blob not found for ${file.filename}`);
-    }
+    const downloadUrl = getDownloadUrl(file.id);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = file.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   return (
@@ -229,7 +227,7 @@ export default function App() {
         {loading ? (
           <div className="py-20 text-center space-y-3">
             <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs text-slate-400">Loading hosted repository files...</p>
+            <p className="text-xs text-slate-400">Loading hosted repository files from Express server...</p>
           </div>
         ) : filteredFiles.length > 0 ? (
           <div
@@ -261,7 +259,7 @@ export default function App() {
             <div className="space-y-1">
               <h3 className="text-lg font-bold text-white">No files found</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                No APKs or ZIP files match your current search query or category filter.
+                No APKs or ZIP files match your search or category filter.
               </p>
             </div>
 
@@ -299,13 +297,13 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-emerald-400" />
             <span className="font-bold text-slate-200">APKVault</span>
-            <span>— APK & ZIP File Distribution Engine</span>
+            <span>— Centralized APK & ZIP File Hosting Engine</span>
           </div>
 
           <div className="flex items-center gap-4 text-slate-400">
-            <span>Direct Downloads</span>
+            <span>Server Direct Streaming</span>
             <span>•</span>
-            <span>QR Phone Sync</span>
+            <span>QR Mobile Sync</span>
             <span>•</span>
             <span>Checksum Verified</span>
           </div>
