@@ -1,0 +1,6 @@
+{
+  "name": "APKVault - APK & ZIP Hosting Hub",
+  "description": "A high-performance web platform to host, manage, and share Android APKs and ZIP archives with direct downloads, QR code mobile transfers, and package inspection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
