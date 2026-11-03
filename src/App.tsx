@@ -4,7 +4,7 @@ import {
   subscribeToFiles,
   saveHostedFile,
   deleteHostedFile,
-  getDownloadUrl,
+  downloadRealFileFromCloud,
   incrementDownloadCount,
 } from './services/storage';
 import { filterAndSortFiles } from './utils/fileHelpers';
@@ -16,7 +16,7 @@ import { UploadModal } from './components/UploadModal';
 import { FileDetailModal } from './components/FileDetailModal';
 import { QRCodeModal } from './components/QRCodeModal';
 import { StorageStatsModal } from './components/StorageStatsModal';
-import { FolderSearch, Plus, CheckCircle, Smartphone, CloudCheck, Download } from 'lucide-react';
+import { FolderSearch, Plus, CheckCircle, Smartphone, CloudCheck, Download, AlertCircle } from 'lucide-react';
 
 const CATEGORIES: Category[] = [
   'All',
@@ -47,9 +47,9 @@ export default function App() {
   const [selectedFileQR, setSelectedFileQR] = useState<HostedFile | null>(null);
   const [isStorageStatsOpen, setIsStorageStatsOpen] = useState<boolean>(false);
 
-  // Notification Toast & Direct Download Banner
+  // Notification Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [autoDownloadFile, setAutoDownloadFile] = useState<HostedFile | null>(null);
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
 
   // Real-time Cloud Firestore subscription across all connected users & devices
   useEffect(() => {
@@ -65,7 +65,6 @@ export default function App() {
         const found = cloudFiles.find((f) => f.id === downloadId);
         if (found) {
           setSelectedFileDetails(found);
-          setAutoDownloadFile(found);
         }
       }
     });
@@ -77,7 +76,7 @@ export default function App() {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
-    }, 3500);
+    }, 4000);
   };
 
   // Derived Storage Statistics
@@ -128,18 +127,18 @@ export default function App() {
   };
 
   // Save uploaded file to Cloud Database
-  const handleSaveFile = async (newFileMeta: HostedFile, blob: Blob) => {
+  const handleSaveFile = async (newFileMeta: HostedFile, realFile: File) => {
     try {
-      await saveHostedFile(newFileMeta, blob);
-      showToast(`Successfully published ${newFileMeta.title} (v${newFileMeta.version})!`);
+      await saveHostedFile(newFileMeta, realFile);
+      showToast(`Published "${newFileMeta.title}" to Cloud Database!`);
     } catch (err: any) {
-      showToast(`Error: ${err.message || 'Upload failed'}`);
+      showToast(`Upload Error: ${err.message || 'Failed to upload file'}`);
     }
   };
 
   // Delete file handler
   const handleDeleteFile = async (targetFile: HostedFile) => {
-    if (confirm(`Are you sure you want to delete "${targetFile.title}"?`)) {
+    if (confirm(`Delete "${targetFile.title}" from the cloud database?`)) {
       const success = await deleteHostedFile(targetFile.id);
       if (success) {
         if (selectedFileDetails?.id === targetFile.id) setSelectedFileDetails(null);
@@ -152,22 +151,34 @@ export default function App() {
   };
 
   /**
-   * Direct download trigger optimized for mobile phone browsers & desktop
+   * Real file download trigger: Retrieves exact binary chunks from Cloud Firestore
    */
-  const handleDownload = (file: HostedFile) => {
-    showToast(`Starting download for ${file.filename}...`);
-    
-    // Asynchronous count increment
+  const handleDownload = async (file: HostedFile) => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    showToast(`Downloading real file "${file.filename}"...`);
+
     incrementDownloadCount(file.id).catch(() => {});
 
-    // Determine target download URL
-    let targetUrl = file.downloadUrl || `/api/files/download/${file.id}`;
-    if (targetUrl.startsWith('/')) {
-      targetUrl = window.location.origin + targetUrl;
-    }
+    try {
+      const realBlob = await downloadRealFileFromCloud(file.id, file.filename, file.fileType);
+      const blobUrl = URL.createObjectURL(realBlob);
 
-    // Direct window location update triggers native mobile browser download dialog reliably
-    window.location.href = targetUrl;
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = file.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      showToast(`Downloaded ${file.filename} successfully!`);
+    } catch (err: any) {
+      console.error('Download error:', err);
+      showToast(`Download failed: ${err.message || 'Unable to retrieve file bytes'}`);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   return (
@@ -178,33 +189,6 @@ export default function App() {
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-slate-900 border border-emerald-500/40 text-emerald-400 font-medium text-xs rounded-2xl shadow-2xl animate-bounce">
           <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Direct Phone Download Banner if opened via QR link */}
-      {autoDownloadFile && (
-        <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-slate-950 px-4 py-3 border-b border-emerald-400/40 shadow-xl flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-xs font-extrabold">
-            <Smartphone className="w-4 h-4 text-white" />
-            <span>Ready to download <strong>{autoDownloadFile.title}</strong> (v{autoDownloadFile.version}) on your device</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleDownload(autoDownloadFile)}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-slate-950 hover:bg-slate-900 text-emerald-400 font-black text-xs rounded-xl transition-all shadow"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Download Now</span>
-            </button>
-            
-            <button
-              onClick={() => setAutoDownloadFile(null)}
-              className="text-slate-900 hover:text-white font-bold text-xs px-2"
-            >
-              Dismiss
-            </button>
-          </div>
         </div>
       )}
 
@@ -250,7 +234,7 @@ export default function App() {
         {loading ? (
           <div className="py-20 text-center space-y-3">
             <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs text-slate-400">Connecting to Cloud Database & sync engine...</p>
+            <p className="text-xs text-slate-400">Syncing with Cloud Database...</p>
           </div>
         ) : filteredFiles.length > 0 ? (
           <div
@@ -273,40 +257,29 @@ export default function App() {
             ))}
           </div>
         ) : (
-          /* Empty Search or Filter State */
+          /* Empty Repository State */
           <div className="bg-slate-900/40 border border-slate-800/80 rounded-3xl p-12 text-center max-w-md mx-auto my-12 space-y-4">
             <div className="w-16 h-16 rounded-2xl bg-slate-800/80 text-slate-400 flex items-center justify-center mx-auto">
               <FolderSearch className="w-8 h-8 text-slate-500" />
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-lg font-bold text-white">No files found</h3>
+              <h3 className="text-lg font-bold text-white">No files in repository</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                No APKs or ZIP files match your search or category filter.
+                No APKs or ZIP files have been uploaded yet. Upload a file from your phone or computer to start sharing across devices.
               </p>
             </div>
 
             <div className="flex items-center justify-center gap-3 pt-2">
               <button
                 onClick={() => {
-                  setSearchQuery('');
-                  setSelectedCategory('All');
-                  setSelectedFileType('all');
-                }}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl transition-colors"
-              >
-                Reset Filters
-              </button>
-
-              <button
-                onClick={() => {
                   setInitialUploadFile(null);
                   setIsUploadOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-xl transition-colors shadow-md shadow-emerald-500/20"
+                className="flex items-center gap-1.5 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black rounded-xl transition-colors shadow-lg shadow-emerald-500/20"
               >
                 <Plus className="w-4 h-4" />
-                <span>Upload New File</span>
+                <span>Upload First File</span>
               </button>
             </div>
           </div>
@@ -320,18 +293,16 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-emerald-400" />
             <span className="font-bold text-slate-200">APKVault</span>
-            <span>— Mobile Optimized APK & ZIP Hosting Engine</span>
+            <span>— Real-time Cross-Device Cloud Hosting</span>
           </div>
 
           <div className="flex items-center gap-4 text-slate-400">
             <span className="flex items-center gap-1 text-emerald-400 font-semibold">
               <CloudCheck className="w-3.5 h-3.5" />
-              Real-time Mobile Sync
+              Real Cloud Sync Active
             </span>
             <span>•</span>
-            <span>QR Phone Download</span>
-            <span>•</span>
-            <span>Checksum Verified</span>
+            <span>No Mockups</span>
           </div>
         </div>
       </footer>
