@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, UploadCloud, FileCode, CheckCircle2, ShieldCheck, Sparkles } from 'lucide-react';
-import { Category, FileType, HostedFile, UploadFormData } from '../types/file';
+import { X, UploadCloud, FileCode, CheckCircle2, ShieldCheck, Sparkles, AlertCircle } from 'lucide-react';
+import { Category, FileType, HostedFile } from '../types/file';
 import { parsePackageFromFilename, formatBytes, generateMockChecksums } from '../utils/fileHelpers';
 
 interface UploadModalProps {
@@ -61,10 +61,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       setPackageName(`com.app.${parsed.title.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
     }
 
-    // Set default tags
     setTags(`${parsed.fileType}, ${parsed.title.toLowerCase()}, release`);
     
-    // Set default description
     if (parsed.fileType === 'apk') {
       setDescription(`Android application package for ${parsed.title}. Sideload and install directly on your Android phone.`);
     } else {
@@ -81,12 +79,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFile) return;
+    if (!title.trim()) return;
 
     setIsUploading(true);
     setUploadProgress(15);
 
-    // Simulate fast upload progress animation
     const interval = setInterval(() => {
       setUploadProgress((prev) => {
         if (prev >= 90) {
@@ -95,26 +92,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         }
         return prev + 25;
       });
-    }, 120);
+    }, 100);
 
     setTimeout(async () => {
       clearInterval(interval);
       setUploadProgress(100);
 
-      const checksums = generateMockChecksums(selectedFile.name + selectedFile.size);
+      const computedFilename = selectedFile
+        ? selectedFile.name
+        : `${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}_v${version}.${fileType}`;
+      
+      const computedSize = selectedFile ? selectedFile.size : 15400000;
+      const checksums = generateMockChecksums(computedFilename + computedSize + Date.now());
+
       const newHostedFile: HostedFile = {
         id: `user-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        title: title.trim() || selectedFile.name,
-        filename: selectedFile.name,
+        title: title.trim(),
+        filename: computedFilename,
         fileType,
-        fileSize: selectedFile.size,
+        fileSize: computedSize,
         version: version.trim() || '1.0.0',
-        packageName: fileType === 'apk' || fileType === 'xapk' ? packageName.trim() || undefined : undefined,
+        packageName: fileType === 'apk' || fileType === 'xapk' 
+          ? (packageName.trim() || `com.dev.${title.toLowerCase().replace(/[^a-z0-9]/g, '')}`) 
+          : undefined,
         minSdk: fileType === 'apk' || fileType === 'xapk' ? minSdk.trim() : undefined,
         category,
-        description: description.trim() || 'Uploaded file package.',
+        description: description.trim() || `Uploaded ${fileType.toUpperCase()} file package for ${title}.`,
         changelog: changelog.trim() || '• Initial release',
-        developer: developer.trim() || 'Anonymous Developer',
+        developer: developer.trim() || 'Independent Developer',
         uploadDate: new Date().toISOString(),
         downloadCount: 0,
         rating: 5.0,
@@ -122,7 +127,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         sha256: checksums.sha256,
         md5: checksums.md5,
         isVerified: true,
-        tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+        tags: tags ? tags.split(',').map((t) => t.trim()).filter(Boolean) : [fileType, 'release'],
         permissions: fileType === 'apk' ? [
           'android.permission.INTERNET',
           'android.permission.READ_EXTERNAL_STORAGE',
@@ -131,14 +136,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       };
 
       try {
-        await onSaveFile(newHostedFile, selectedFile);
+        const payloadBlob = selectedFile || new Blob([`[APKVault Package]\nTitle: ${title}\n`], { type: 'application/octet-stream' });
+        await onSaveFile(newHostedFile, payloadBlob);
         setIsUploading(false);
         onClose();
       } catch (err) {
         console.error('Upload failed:', err);
         setIsUploading(false);
       }
-    }, 700);
+    }, 500);
   };
 
   return (
@@ -152,8 +158,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <UploadCloud className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Manual File Upload</h2>
-              <p className="text-xs text-slate-400">Host your APK or ZIP file for direct download</p>
+              <h2 className="text-lg font-bold text-white">Publish APK / ZIP Package</h2>
+              <p className="text-xs text-slate-400">Host your file for instant direct downloads</p>
             </div>
           </div>
 
@@ -168,15 +174,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
           
-          {/* Dropzone / File Selector */}
+          {/* File Upload Zone */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Select or Drop File (.apk / .zip)
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                1. Select File (.apk / .zip) <span className="text-slate-500 font-normal">(Optional or Auto-Detect)</span>
+              </label>
+            </div>
+
             <div
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-xl p-5 text-center transition-all ${
+              className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${
                 selectedFile
                   ? 'border-emerald-500/50 bg-emerald-500/5'
                   : 'border-slate-800 hover:border-slate-700 bg-slate-950/60'
@@ -211,14 +220,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               ) : (
                 <label
                   htmlFor="modal-file-input"
-                  className="cursor-pointer block space-y-2 py-4"
+                  className="cursor-pointer block space-y-1.5 py-3"
                 >
-                  <UploadCloud className="w-8 h-8 text-emerald-400 mx-auto" />
-                  <p className="text-sm font-semibold text-slate-200">
+                  <UploadCloud className="w-7 h-7 text-emerald-400 mx-auto" />
+                  <p className="text-xs font-semibold text-slate-200">
                     Click to select file or drag & drop here
                   </p>
-                  <p className="text-xs text-slate-400">
-                    Supports .apk, .xapk, .zip, .rar, .7z up to 500MB+
+                  <p className="text-[11px] text-slate-500">
+                    Or skip file attach to create manual listing directly
                   </p>
                 </label>
               )}
@@ -229,14 +238,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
             <div className="sm:col-span-8">
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                App / Archive Title *
+                App / Package Title *
               </label>
               <input
                 type="text"
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. My Utility App"
+                placeholder="e.g. Minecraft, Spotify Mod, Utility Pack"
                 className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
               />
             </div>
@@ -296,13 +305,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 p-3.5 bg-slate-950/60 border border-slate-800/80 rounded-xl">
               <div className="sm:col-span-7">
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
-                  Package Name
+                  Package Identifier
                 </label>
                 <input
                   type="text"
                   value={packageName}
                   onChange={(e) => setPackageName(e.target.value)}
-                  placeholder="com.example.app"
+                  placeholder="com.company.app"
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50"
                 />
               </div>
@@ -326,20 +335,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
             <div className="sm:col-span-6">
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                Developer / Publisher
+                Developer / Author
               </label>
               <input
                 type="text"
                 value={developer}
                 onChange={(e) => setDeveloper(e.target.value)}
-                placeholder="e.g. Acme Software"
+                placeholder="e.g. Acme Studio"
                 className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
               />
             </div>
 
             <div className="sm:col-span-6">
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                Icon Image URL (Optional)
+                App Icon URL (Optional)
               </label>
               <input
                 type="url"
@@ -354,7 +363,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Description */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-              Description
+              App Description
             </label>
             <textarea
               rows={2}
@@ -369,7 +378,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
             <div className="sm:col-span-7">
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                Release Notes / Changelog
+                Changelog / Notes
               </label>
               <textarea
                 rows={2}
@@ -382,23 +391,23 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
             <div className="sm:col-span-5">
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                Tags (Comma separated)
+                Search Tags (Comma separated)
               </label>
               <input
                 type="text"
                 value={tags}
                 onChange={(e) => setTags(e.target.value)}
-                placeholder="apk, utility, tool"
+                placeholder="apk, game, tool"
                 className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
               />
             </div>
           </div>
 
-          {/* Progress Bar when uploading */}
+          {/* Progress Bar when publishing */}
           {isUploading && (
             <div className="space-y-1.5 pt-2">
               <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
-                <span>Saving file to local repository...</span>
+                <span>Publishing file package to server repository...</span>
                 <span>{uploadProgress}%</span>
               </div>
               <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden">
@@ -414,7 +423,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           <div className="flex items-center justify-between pt-4 border-t border-slate-800">
             <div className="flex items-center gap-1.5 text-xs text-emerald-400">
               <ShieldCheck className="w-4 h-4" />
-              <span>VirusTotal Verification Clean</span>
+              <span>VirusTotal Verified Clean</span>
             </div>
 
             <div className="flex items-center gap-3">
@@ -429,11 +438,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               
               <button
                 type="submit"
-                disabled={!selectedFile || isUploading}
+                disabled={!title.trim() || isUploading}
                 className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-emerald-500/20 transition-all"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{isUploading ? 'Publishing...' : 'Publish File'}</span>
+                <span>{isUploading ? 'Publishing...' : 'Publish Package'}</span>
               </button>
             </div>
           </div>

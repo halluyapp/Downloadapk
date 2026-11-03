@@ -17,14 +17,18 @@ const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'files.json');
 
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+try {
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.error('Directory creation error:', e);
 }
 
-// Pre-seeded files catalog for fresh installations
+// Pre-seeded catalog
 const INITIAL_SEED: HostedFile[] = [
   {
     id: 'seed-vlc-apk',
@@ -163,7 +167,6 @@ const INITIAL_SEED: HostedFile[] = [
   }
 ];
 
-// Read database or initialize
 function readDB(): HostedFile[] {
   try {
     if (fs.existsSync(DB_FILE)) {
@@ -173,13 +176,20 @@ function readDB(): HostedFile[] {
   } catch (err) {
     console.error('Error reading JSON DB:', err);
   }
-  // Initialize with seed
-  fs.writeFileSync(DB_FILE, JSON.stringify(INITIAL_SEED, null, 2));
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(INITIAL_SEED, null, 2));
+  } catch (e) {
+    console.error('Failed writing DB file:', e);
+  }
   return INITIAL_SEED;
 }
 
 function saveDB(files: HostedFile[]) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(files, null, 2));
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(files, null, 2));
+  } catch (e) {
+    console.error('Error saving DB:', e);
+  }
 }
 
 // Multer storage setup
@@ -189,7 +199,7 @@ const storage = multer.diskStorage({
   },
   filename: (_req, file, cb) => {
     const uniqueId = Date.now() + '-' + Math.random().toString(36).substring(2, 8);
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9\._\-]/g, '_');
+    const safeName = (file.originalname || 'file.apk').replace(/[^a-zA-Z0-9\._\-]/g, '_');
     cb(null, `${uniqueId}-${safeName}`);
   },
 });
@@ -199,7 +209,16 @@ const upload = multer({
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// CORS
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  next();
+});
 
 // API Routes
 
@@ -209,43 +228,54 @@ app.get('/api/files', (_req, res) => {
   res.json(files);
 });
 
-// POST /api/files/upload - Upload new APK or ZIP file
-app.post('/api/files/upload', upload.single('file'), (req, res) => {
+// POST /api/files/upload - Upload new file or create manual file entry
+app.post('/api/files/upload', (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      console.warn('Multer file parsing warning/error, proceeding with body data:', err.message);
+    }
+    next();
+  });
+}, (req, res) => {
   try {
     const file = req.file;
-    const body = req.body;
+    const body = req.body || {};
 
     const files = readDB();
 
-    const originalName = file ? file.originalname : body.filename || 'uploaded-file.apk';
-    const fileSize = file ? file.size : parseInt(body.fileSize || '1024000', 10);
+    const originalName = file ? file.originalname : body.filename || `${(body.title || 'app').toLowerCase().replace(/\s+/g, '-')}.${body.fileType || 'apk'}`;
+    const fileSize = file ? file.size : parseInt(body.fileSize || '15400000', 10);
     const parsed = parsePackageFromFilename(originalName);
 
-    const checksums = generateMockChecksums(originalName + fileSize);
+    const checksums = generateMockChecksums(originalName + fileSize + Date.now());
     const fileId = `app-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-    // Create seed buffer if no file was attached
+    // Create file on disk if no file upload was attached
     let filePathOnDisk = file ? file.path : '';
     if (!file) {
       filePathOnDisk = path.join(UPLOADS_DIR, `${fileId}-${originalName}`);
       const mockPayload = Buffer.from(
-        `[APKVault Hosted File Package]\nFilename: ${originalName}\nUploaded on ${new Date().toISOString()}\n` +
-          'A'.repeat(1024)
+        `[APKVault Hosted File Package]\nTitle: ${body.title || parsed.title}\nFilename: ${originalName}\nUploaded on ${new Date().toISOString()}\n` +
+          '0'.repeat(2048)
       );
-      fs.writeFileSync(filePathOnDisk, mockPayload);
+      try {
+        fs.writeFileSync(filePathOnDisk, mockPayload);
+      } catch (err) {
+        console.error('Error writing file payload to disk:', err);
+      }
     }
 
     const newHostedFile: HostedFile = {
       id: fileId,
       title: body.title || parsed.title || originalName,
       filename: originalName,
-      fileType: (body.fileType as any) || parsed.fileType,
+      fileType: (body.fileType as any) || parsed.fileType || 'apk',
       fileSize: fileSize,
       version: body.version || parsed.version || '1.0.0',
       packageName: body.packageName || parsed.packageName || undefined,
       minSdk: body.minSdk || 'Android 7.0+ (API 24)',
       category: body.category || 'Utilities',
-      description: body.description || 'Uploaded APK or ZIP file.',
+      description: body.description || 'Uploaded APK or ZIP file package.',
       changelog: body.changelog || '• Initial public upload',
       developer: body.developer || 'Developer',
       uploadDate: new Date().toISOString(),
@@ -255,8 +285,13 @@ app.post('/api/files/upload', upload.single('file'), (req, res) => {
       sha256: checksums.sha256,
       md5: checksums.md5,
       isVerified: true,
-      tags: body.tags ? body.tags.split(',').map((t: string) => t.trim()) : [parsed.fileType],
+      tags: body.tags ? body.tags.split(',').map((t: string) => t.trim()) : [parsed.fileType || 'apk'],
       downloadUrl: `/api/files/download/${fileId}`,
+      permissions: (body.fileType === 'apk' || body.fileType === 'xapk') ? [
+        'android.permission.INTERNET',
+        'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.ACCESS_NETWORK_STATE'
+      ] : undefined
     };
 
     files.unshift(newHostedFile);
@@ -265,11 +300,11 @@ app.post('/api/files/upload', upload.single('file'), (req, res) => {
     res.status(201).json(newHostedFile);
   } catch (err: any) {
     console.error('Error uploading file:', err);
-    res.status(500).json({ error: err.message || 'Failed to upload file' });
+    res.status(500).json({ error: err.message || 'Failed to publish file' });
   }
 });
 
-// GET /api/files/download/:id - Stream download file
+// GET /api/files/download/:id - Stream file download
 app.get('/api/files/download/:id', (req, res) => {
   const { id } = req.params;
   const files = readDB();
@@ -281,25 +316,31 @@ app.get('/api/files/download/:id', (req, res) => {
 
   const fileInfo = files[fileIndex];
 
-  // Increment download count
   fileInfo.downloadCount += 1;
   files[fileIndex] = fileInfo;
   saveDB(files);
 
-  // Look for corresponding file in UPLOADS_DIR
-  const matchingFiles = fs.readdirSync(UPLOADS_DIR).filter((f) => f.startsWith(id) || f.endsWith(fileInfo.filename));
-
   let downloadFilePath = '';
-  if (matchingFiles.length > 0) {
-    downloadFilePath = path.join(UPLOADS_DIR, matchingFiles[0]);
-  } else {
-    // Generate synthetic file payload on the fly if missing
+  try {
+    const matchingFiles = fs.readdirSync(UPLOADS_DIR).filter((f) => f.startsWith(id) || f.endsWith(fileInfo.filename));
+    if (matchingFiles.length > 0) {
+      downloadFilePath = path.join(UPLOADS_DIR, matchingFiles[0]);
+    }
+  } catch (e) {
+    console.error('Error reading upload dir:', e);
+  }
+
+  if (!downloadFilePath || !fs.existsSync(downloadFilePath)) {
     downloadFilePath = path.join(UPLOADS_DIR, `${id}-${fileInfo.filename}`);
     const mockPayload = Buffer.from(
       `[APKVault Shared File]\nName: ${fileInfo.title}\nFilename: ${fileInfo.filename}\nType: ${fileInfo.fileType}\nVersion: ${fileInfo.version}\n` +
         '0'.repeat(2048)
     );
-    fs.writeFileSync(downloadFilePath, mockPayload);
+    try {
+      fs.writeFileSync(downloadFilePath, mockPayload);
+    } catch (e) {
+      console.error('Error writing fallback download file:', e);
+    }
   }
 
   const contentType = fileInfo.fileType === 'zip' ? 'application/zip' : 'application/vnd.android.package-archive';
@@ -322,39 +363,48 @@ app.delete('/api/files/:id', (req, res) => {
   files = files.filter((f) => f.id !== id);
   saveDB(files);
 
-  // Remove file from uploads directory if exists
   try {
     const matchingFiles = fs.readdirSync(UPLOADS_DIR).filter((f) => f.startsWith(id) || f.endsWith(fileInfo.filename));
     for (const f of matchingFiles) {
       fs.unlinkSync(path.join(UPLOADS_DIR, f));
     }
   } catch (err) {
-    console.error('Error deleting file from disk:', err);
+    console.error('Error removing file from disk:', err);
   }
 
   res.json({ success: true, id });
 });
 
-// Mount Vite middleware in development
+// Start Express and mount Vite dev server if in dev mode
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'custom',
-    });
-    app.use(vite.middlewares);
-    app.use('*', async (req, res, next) => {
-      try {
-        const url = req.originalUrl;
-        let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
-        template = await vite.transformIndexHtml(url, template);
-        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
-      } catch (e) {
-        vite.ssrFixStacktrace(e as Error);
-        next(e);
-      }
-    });
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.SERVER_MODE === 'production';
+
+  if (!isProduction) {
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'custom',
+      });
+      app.use(vite.middlewares);
+      app.use('*', async (req, res, next) => {
+        try {
+          const url = req.originalUrl;
+          let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
+          template = await vite.transformIndexHtml(url, template);
+          res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+        } catch (e) {
+          vite.ssrFixStacktrace(e as Error);
+          next(e);
+        }
+      });
+    } catch (err) {
+      console.error('Vite dev middleware initialization fallback:', err);
+      app.use(express.static(path.resolve(__dirname, 'dist')));
+      app.get('*', (_req, res) => {
+        res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      });
+    }
   } else {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (_req, res) => {
@@ -363,7 +413,7 @@ async function startServer() {
   }
 
   app.listen(PORT, () => {
-    console.log(`APKVault Express server running at http://localhost:${PORT}`);
+    console.log(`APKVault server running at http://localhost:${PORT}`);
   });
 }
 

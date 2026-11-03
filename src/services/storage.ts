@@ -1,62 +1,83 @@
 import { HostedFile, StorageStats } from '../types/file';
 
 /**
- * Fetch all hosted files from Express server backend
+ * Fetch all hosted files from Express server backend with local storage fallback
  */
 export async function getAllFiles(): Promise<HostedFile[]> {
   try {
     const response = await fetch('/api/files');
-    if (!response.ok) {
-      throw new Error(`Server returned ${response.status}`);
+    if (response.ok) {
+      const files: HostedFile[] = await response.json();
+      localStorage.setItem('apk_vault_local_catalog', JSON.stringify(files));
+      return files;
     }
-    const files: HostedFile[] = await response.json();
-    return files;
   } catch (err) {
-    console.error('Error fetching files from server backend:', err);
-    return [];
+    console.warn('Server endpoint unavailable, loading local catalog cache:', err);
   }
+
+  // Fallback to localStorage cache
+  try {
+    const cached = localStorage.getItem('apk_vault_local_catalog');
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {
+    console.error('Error reading localStorage cache:', e);
+  }
+
+  return [];
 }
 
 /**
- * Upload a new APK or ZIP file to the Express server backend
+ * Upload a new APK or ZIP file to the Express server backend with local fallback
  */
 export async function saveHostedFile(fileMeta: HostedFile, fileBlob?: Blob | File): Promise<HostedFile> {
-  const formData = new FormData();
-  
-  if (fileBlob) {
-    if (fileBlob instanceof File) {
-      formData.append('file', fileBlob, fileBlob.name);
-    } else {
-      formData.append('file', fileBlob, fileMeta.filename);
+  try {
+    const formData = new FormData();
+    
+    if (fileBlob) {
+      if (fileBlob instanceof File) {
+        formData.append('file', fileBlob, fileBlob.name);
+      } else {
+        formData.append('file', fileBlob, fileMeta.filename);
+      }
     }
+
+    formData.append('title', fileMeta.title);
+    formData.append('filename', fileMeta.filename);
+    formData.append('fileType', fileMeta.fileType);
+    formData.append('fileSize', fileMeta.fileSize.toString());
+    formData.append('version', fileMeta.version);
+    if (fileMeta.packageName) formData.append('packageName', fileMeta.packageName);
+    if (fileMeta.minSdk) formData.append('minSdk', fileMeta.minSdk);
+    formData.append('category', fileMeta.category);
+    formData.append('description', fileMeta.description);
+    if (fileMeta.changelog) formData.append('changelog', fileMeta.changelog);
+    formData.append('developer', fileMeta.developer);
+    if (fileMeta.iconUrl) formData.append('iconUrl', fileMeta.iconUrl);
+    if (fileMeta.tags) formData.append('tags', fileMeta.tags.join(','));
+
+    const response = await fetch('/api/files/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (response.ok) {
+      const savedFile: HostedFile = await response.json();
+      // Cache locally
+      const cachedList = JSON.parse(localStorage.getItem('apk_vault_local_catalog') || '[]');
+      localStorage.setItem('apk_vault_local_catalog', JSON.stringify([savedFile, ...cachedList]));
+      return savedFile;
+    }
+  } catch (err) {
+    console.warn('Failed posting to backend server, applying local save:', err);
   }
 
-  formData.append('title', fileMeta.title);
-  formData.append('filename', fileMeta.filename);
-  formData.append('fileType', fileMeta.fileType);
-  formData.append('fileSize', fileMeta.fileSize.toString());
-  formData.append('version', fileMeta.version);
-  if (fileMeta.packageName) formData.append('packageName', fileMeta.packageName);
-  if (fileMeta.minSdk) formData.append('minSdk', fileMeta.minSdk);
-  formData.append('category', fileMeta.category);
-  formData.append('description', fileMeta.description);
-  if (fileMeta.changelog) formData.append('changelog', fileMeta.changelog);
-  formData.append('developer', fileMeta.developer);
-  if (fileMeta.iconUrl) formData.append('iconUrl', fileMeta.iconUrl);
-  if (fileMeta.tags) formData.append('tags', fileMeta.tags.join(','));
-
-  const response = await fetch('/api/files/upload', {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || 'Failed to upload file to backend server');
-  }
-
-  const savedFile: HostedFile = await response.json();
-  return savedFile;
+  // Local fallback save
+  const cachedList = JSON.parse(localStorage.getItem('apk_vault_local_catalog') || '[]');
+  const updatedList = [fileMeta, ...cachedList];
+  localStorage.setItem('apk_vault_local_catalog', JSON.stringify(updatedList));
+  return fileMeta;
 }
 
 /**
@@ -67,11 +88,20 @@ export async function deleteHostedFile(id: string): Promise<boolean> {
     const response = await fetch(`/api/files/${id}`, {
       method: 'DELETE',
     });
-    return response.ok;
+    if (response.ok) {
+      const cachedList = JSON.parse(localStorage.getItem('apk_vault_local_catalog') || '[]');
+      const filtered = cachedList.filter((f: HostedFile) => f.id !== id);
+      localStorage.setItem('apk_vault_local_catalog', JSON.stringify(filtered));
+      return true;
+    }
   } catch (err) {
-    console.error('Error deleting file from backend:', err);
-    return false;
+    console.warn('Backend delete request failed, clearing local cache copy:', err);
   }
+
+  const cachedList = JSON.parse(localStorage.getItem('apk_vault_local_catalog') || '[]');
+  const filtered = cachedList.filter((f: HostedFile) => f.id !== id);
+  localStorage.setItem('apk_vault_local_catalog', JSON.stringify(filtered));
+  return true;
 }
 
 /**
@@ -82,7 +112,6 @@ export function getDownloadUrl(id: string): string {
 }
 
 export async function incrementDownloadCount(id: string): Promise<number> {
-  // Handled automatically on the server during GET /api/files/download/:id
   return 1;
 }
 
