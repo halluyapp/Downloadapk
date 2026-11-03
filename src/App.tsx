@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Category, FileType, HostedFile, StorageStats } from './types/file';
 import {
-  getAllFiles,
+  subscribeToFiles,
   saveHostedFile,
   deleteHostedFile,
   getDownloadUrl,
+  incrementDownloadCount,
 } from './services/storage';
 import { filterAndSortFiles } from './utils/fileHelpers';
 import { Header } from './components/Header';
@@ -15,7 +16,7 @@ import { UploadModal } from './components/UploadModal';
 import { FileDetailModal } from './components/FileDetailModal';
 import { QRCodeModal } from './components/QRCodeModal';
 import { StorageStatsModal } from './components/StorageStatsModal';
-import { FolderSearch, Plus, CheckCircle, Smartphone } from 'lucide-react';
+import { FolderSearch, Plus, CheckCircle, Smartphone, CloudCheck } from 'lucide-react';
 
 const CATEGORIES: Category[] = [
   'All',
@@ -49,32 +50,26 @@ export default function App() {
   // Notification Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Load files from backend API
+  // Real-time Cloud Firestore subscription across all connected users & devices
   useEffect(() => {
-    loadCatalog();
-  }, []);
-
-  const loadCatalog = async () => {
     setLoading(true);
-    try {
-      const data = await getAllFiles();
-      setFiles(data);
+    const unsubscribe = subscribeToFiles((cloudFiles) => {
+      setFiles(cloudFiles);
+      setLoading(false);
 
       // Check URL params for direct download link or file details
       const params = new URLSearchParams(window.location.search);
       const downloadId = params.get('download');
       if (downloadId) {
-        const found = data.find((f) => f.id === downloadId);
+        const found = cloudFiles.find((f) => f.id === downloadId);
         if (found) {
           setSelectedFileDetails(found);
         }
       }
-    } catch (err) {
-      console.error('Failed to load file catalog:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -130,12 +125,11 @@ export default function App() {
     setIsUploadOpen(true);
   };
 
-  // Save uploaded file to Express server backend & state
+  // Save uploaded file to Cloud Database
   const handleSaveFile = async (newFileMeta: HostedFile, blob: Blob) => {
     try {
-      const saved = await saveHostedFile(newFileMeta, blob);
-      setFiles((prev) => [saved, ...prev]);
-      showToast(`Successfully published ${saved.title} (v${saved.version}) to server`);
+      await saveHostedFile(newFileMeta, blob);
+      showToast(`Successfully published ${newFileMeta.title} (v${newFileMeta.version}) to Cloud Database!`);
     } catch (err: any) {
       showToast(`Error: ${err.message || 'Upload failed'}`);
     }
@@ -143,27 +137,24 @@ export default function App() {
 
   // Delete file handler
   const handleDeleteFile = async (targetFile: HostedFile) => {
-    if (confirm(`Are you sure you want to delete "${targetFile.title}" from the server?`)) {
+    if (confirm(`Are you sure you want to delete "${targetFile.title}" from the cloud database?`)) {
       const success = await deleteHostedFile(targetFile.id);
       if (success) {
-        setFiles((prev) => prev.filter((f) => f.id !== targetFile.id));
         if (selectedFileDetails?.id === targetFile.id) setSelectedFileDetails(null);
         if (selectedFileQR?.id === targetFile.id) setSelectedFileQR(null);
-        showToast(`Deleted ${targetFile.title} from server.`);
+        showToast(`Deleted ${targetFile.title} from Cloud Repository.`);
       } else {
         showToast(`Failed to delete ${targetFile.title}`);
       }
     }
   };
 
-  // Download trigger streaming directly from backend server
+  // Download trigger
   const handleDownload = async (file: HostedFile) => {
-    showToast(`Downloading ${file.filename} from server...`);
+    showToast(`Downloading ${file.filename}...`);
     
-    // Update local download count state
-    setFiles((prev) =>
-      prev.map((f) => (f.id === file.id ? { ...f, downloadCount: f.downloadCount + 1 } : f))
-    );
+    // Update count in cloud database
+    await incrementDownloadCount(file.id);
 
     const downloadUrl = getDownloadUrl(file.id);
     const a = document.createElement('a');
@@ -227,7 +218,7 @@ export default function App() {
         {loading ? (
           <div className="py-20 text-center space-y-3">
             <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs text-slate-400">Loading hosted repository files from Express server...</p>
+            <p className="text-xs text-slate-400">Connecting to Cloud Database & sync engine...</p>
           </div>
         ) : filteredFiles.length > 0 ? (
           <div
@@ -297,11 +288,14 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-emerald-400" />
             <span className="font-bold text-slate-200">APKVault</span>
-            <span>— Centralized APK & ZIP File Hosting Engine</span>
+            <span>— Firebase Cloud Database Powered APK & ZIP Platform</span>
           </div>
 
           <div className="flex items-center gap-4 text-slate-400">
-            <span>Server Direct Streaming</span>
+            <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+              <CloudCheck className="w-3.5 h-3.5" />
+              Real-time Firestore Sync
+            </span>
             <span>•</span>
             <span>QR Mobile Sync</span>
             <span>•</span>

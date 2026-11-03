@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "HostedFile": {
+      "title": "Hosted File Package",
+      "description": "Hosted Android APK or ZIP archive package",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "filename": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "fileType": {
+          "type": "string",
+          "enum": ["apk", "zip", "xapk", "other"]
+        },
+        "fileSize": {
+          "type": "number"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "packageName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "minSdk": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "changelog": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "developer": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "uploadDate": {
+          "type": "string"
+        },
+        "downloadCount": {
+          "type": "number"
+        },
+        "rating": {
+          "type": "number"
+        },
+        "iconUrl": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "sha256": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "md5": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "isVerified": {
+          "type": "boolean"
+        },
+        "downloadUrl": {
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "required": ["title", "filename", "fileType", "fileSize", "version", "category", "developer", "uploadDate", "downloadCount"]
+    }
+  },
+  "firestore": {
+    "/files/{fileId}": {
+      "schema": "HostedFile",
+      "description": "Collection of hosted APK and ZIP files accessible to all users for browsing and downloading"
+    }
+  }
+}
